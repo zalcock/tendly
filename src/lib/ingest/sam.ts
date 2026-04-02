@@ -1,4 +1,4 @@
-import { computeMatchScore, Company, Opportunity } from '../../lib/matching'
+import { computeMatchScore, Company, Opportunity } from '../../../lib/matching'
 
 export async function runSamIngestion(supabase: any, options: { useMock?: boolean } = {}) {
   const useMock = options.useMock ?? !process.env.SAM_GOV_API_KEY
