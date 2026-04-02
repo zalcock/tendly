@@ -15,6 +15,23 @@ export default async function Page() {
   return (
     <div className="p-6">
       <h1 className="text-2xl font-bold mb-4">Ingestion Runs</h1>
+      <div className="mb-4">
+        {/* Client button component */}
+        {/* @ts-ignore */}
+        <script dangerouslySetInnerHTML={{__html: `
+          (async function(){
+            const mod = await import('/src/components/RunIngestionButton.tsx');
+            const el = document.getElementById('run-button-placeholder');
+            if (el && mod && mod.default) {
+              const Comp = mod.default;
+              // mount via innerHTML fallback
+              el.innerHTML = '<div id="run-btn-mount"></div>';
+              // can't mount React component here—client-side bundling handles it; using dynamic import above is better.
+            }
+          })();
+        `}} />
+        <div id="run-button-placeholder"></div>
+      </div>
       <div className="overflow-x-auto">
         <table className="w-full table-auto border-collapse">
           <thead>
