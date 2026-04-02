@@ -1,7 +1,5 @@
-import dynamic from 'next/dynamic'
 import { createClient } from '@supabase/supabase-js'
-
-const RunDigestButton = dynamic(() => import('../../../src/components/RunDigestButton'), { ssr: false })
+import RunDigestButton from '../../../src/components/RunDigestButton'
 
 export default async function Page() {
   const supabase = createClient(process.env.NEXT_PUBLIC_SUPABASE_URL!, process.env.SUPABASE_SERVICE_ROLE_KEY!)
