@@ -1,5 +1,6 @@
 -- Enable UUID generation
 create extension if not exists "uuid-ossp";
+create extension if not exists "pgcrypto";
 
 -- USERS (managed by Supabase Auth, extend with profiles)
 create table public.profiles (
@@ -13,7 +14,7 @@ create table public.profiles (
 
 -- COMPANIES
 create table public.companies (
-  id uuid primary key default uuid_generate_v4(),
+  id uuid primary key default gen_random_uuid(),
   owner_id uuid references public.profiles(id) on delete cascade,
   name text not null,
   legal_name text,
@@ -32,7 +33,7 @@ create table public.companies (
 
 -- OPPORTUNITY SOURCES
 create table public.opportunity_sources (
-  id uuid primary key default uuid_generate_v4(),
+  id uuid primary key default gen_random_uuid(),
   type text not null check (type in ('SAM','STATE','LOCAL')),
   name text not null,
   base_url text not null,
@@ -47,7 +48,7 @@ values ('SAM', 'SAM.gov', 'https://sam.gov',
 
 -- OPPORTUNITIES
 create table public.opportunities (
-  id uuid primary key default uuid_generate_v4(),
+  id uuid primary key default gen_random_uuid(),
   external_id text not null,
   source_id uuid references public.opportunity_sources(id),
   title text not null,
@@ -77,7 +78,7 @@ create table public.opportunities (
 
 -- OPPORTUNITY DOCUMENTS
 create table public.opportunity_documents (
-  id uuid primary key default uuid_generate_v4(),
+  id uuid primary key default gen_random_uuid(),
   opportunity_id uuid references public.opportunities(id) on delete cascade,
   name text not null,
   url text not null,
@@ -87,7 +88,7 @@ create table public.opportunity_documents (
 
 -- MATCH SCORES
 create table public.match_scores (
-  id uuid primary key default uuid_generate_v4(),
+  id uuid primary key default gen_random_uuid(),
   company_id uuid references public.companies(id) on delete cascade,
   opportunity_id uuid references public.opportunities(id) on delete cascade,
   score integer not null check (score between 0 and 100),
@@ -98,7 +99,7 @@ create table public.match_scores (
 
 -- BIDS
 create table public.bids (
-  id uuid primary key default uuid_generate_v4(),
+  id uuid primary key default gen_random_uuid(),
   company_id uuid references public.companies(id) on delete cascade,
   opportunity_id uuid references public.opportunities(id) on delete cascade,
   stage text not null default 'DISCOVERING'
@@ -116,7 +117,7 @@ create table public.bids (
 
 -- COMPANY DOCUMENTS
 create table public.company_documents (
-  id uuid primary key default uuid_generate_v4(),
+  id uuid primary key default gen_random_uuid(),
   company_id uuid references public.companies(id) on delete cascade,
   name text not null,
   type text not null
@@ -133,7 +134,7 @@ create table public.company_documents (
 
 -- BID TASKS
 create table public.bid_tasks (
-  id uuid primary key default uuid_generate_v4(),
+  id uuid primary key default gen_random_uuid(),
   bid_id uuid references public.bids(id) on delete cascade,
   description text not null,
   type text not null check (type in ('DOCUMENT','TEXT','CHECK')),
@@ -148,7 +149,7 @@ create table public.bid_tasks (
 
 -- NOTIFICATIONS
 create table public.notifications (
-  id uuid primary key default uuid_generate_v4(),
+  id uuid primary key default gen_random_uuid(),
   user_id uuid references public.profiles(id) on delete cascade,
   type text not null
     check (type in ('NEW_HIGH_FIT','DEADLINE_REMINDER','RFP_AMENDMENT')),
