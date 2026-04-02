@@ -17,6 +17,14 @@ export async function POST(request: Request) {
     } catch (e) {
       // ignore
     }
-    return NextResponse.json({ ok: false, error: String(err) }, { status: 500 })
+    const serializeError = (e: any) => {
+      if (e instanceof Error) return { message: e.message, stack: e.stack }
+      try {
+        return JSON.parse(JSON.stringify(e))
+      } catch (e2) {
+        return String(e)
+      }
+    }
+    return NextResponse.json({ ok: false, error: serializeError(err) }, { status: 500 })
   }
 }
