@@ -1,4 +1,7 @@
+import dynamic from 'next/dynamic'
 import { createClient } from '@supabase/supabase-js'
+
+const RunButton = dynamic(() => import('../../../src/components/RunIngestionButton'), { ssr: false })
 
 export default async function Page() {
   const supabase = createClient(
@@ -16,21 +19,7 @@ export default async function Page() {
     <div className="p-6">
       <h1 className="text-2xl font-bold mb-4">Ingestion Runs</h1>
       <div className="mb-4">
-        {/* Client button component */}
-        {/* @ts-ignore */}
-        <script dangerouslySetInnerHTML={{__html: `
-          (async function(){
-            const mod = await import('/src/components/RunIngestionButton.tsx');
-            const el = document.getElementById('run-button-placeholder');
-            if (el && mod && mod.default) {
-              const Comp = mod.default;
-              // mount via innerHTML fallback
-              el.innerHTML = '<div id="run-btn-mount"></div>';
-              // can't mount React component here—client-side bundling handles it; using dynamic import above is better.
-            }
-          })();
-        `}} />
-        <div id="run-button-placeholder"></div>
+        <RunButton />
       </div>
       <div className="overflow-x-auto">
         <table className="w-full table-auto border-collapse">
