@@ -9,6 +9,8 @@ const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY)
 export async function runDigestForAll({ sinceHours = 24, limit = 1000 } = {}) {
   const since = new Date(Date.now() - sinceHours * 60 * 60 * 1000).toISOString()
 
+  console.log('runDigestForAll starting', { since, limit, RESEND_API_KEY: Boolean(process.env.RESEND_API_KEY) })
+
   // fetch profiles with an email
   const { data: profiles, error } = await supabase
     .from('profiles')
