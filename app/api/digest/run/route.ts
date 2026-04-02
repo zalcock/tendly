@@ -12,6 +12,11 @@ export async function POST(request: Request) {
     const results = await runDigestForAll({ sinceHours: 24 })
     return NextResponse.json({ ok: true, results })
   } catch (err) {
+    try {
+      console.error('digest run error', err)
+    } catch (e) {
+      // ignore
+    }
     return NextResponse.json({ ok: false, error: String(err) }, { status: 500 })
   }
 }
