@@ -51,7 +51,12 @@ export async function runDigestForAll({ sinceHours = 24, limit = 1000 } = {}) {
         <p>Log in to Tendly to review and act on these opportunities.</p>
       `
 
-      await sendEmail(p.email, subject, html)
+      try {
+        await sendEmail(p.email, subject, html)
+      } catch (e) {
+        results.push({ profileId: p.id, emailSent: false, error: String(e) })
+        continue
+      }
 
       // record a notification
       await supabase.from('notifications').insert([
