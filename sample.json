@@ -1,0 +1,2 @@
+Create a small JSON sample (save as sample.json):
+{ "items": [ { "id":"TEST-1","title":"Test","agency":"X","naics":"238220","posted_at":"2026-04-07T00:00:00Z","proposals_due_at":"2026-04-14T00:00:00Z","url":"https://example/1" } ] }

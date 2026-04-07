@@ -1,0 +1,63 @@
+"use client"
+
+import React, { useState } from 'react'
+import { useRouter } from 'next/navigation'
+
+export default function OnboardForm() {
+  const router = useRouter()
+  const [companyName, setCompanyName] = useState('')
+  const [naics, setNaics] = useState('')
+  const [location, setLocation] = useState('')
+  const [certifications, setCertifications] = useState('')
+  const [keywords, setKeywords] = useState('')
+  const [loading, setLoading] = useState(false)
+  const [error, setError] = useState('')
+
+  async function handleSubmit(e: React.FormEvent) {
+    e.preventDefault()
+    setLoading(true)
+    setError('')
+    try {
+      const res = await fetch('/api/onboard/create', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ companyName, naics, location, certifications, keywords }),
+      })
+      if (!res.ok) throw new Error('Failed to create company')
+      router.push('/dashboard')
+    } catch (err: any) {
+      setError(err.message)
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  return (
+    <form onSubmit={handleSubmit} className="space-y-4">
+      <div>
+        <label className="block font-medium">Company name</label>
+        <input value={companyName} onChange={e => setCompanyName(e.target.value)} className="w-full border p-2 rounded" required />
+      </div>
+      <div>
+        <label className="block font-medium">NAICS codes (comma separated)</label>
+        <input value={naics} onChange={e => setNaics(e.target.value)} className="w-full border p-2 rounded" placeholder="e.g. 541511, 541512" />
+      </div>
+      <div>
+        <label className="block font-medium">Location (City, State)</label>
+        <input value={location} onChange={e => setLocation(e.target.value)} className="w-full border p-2 rounded" />
+      </div>
+      <div>
+        <label className="block font-medium">Certifications (comma separated)</label>
+        <input value={certifications} onChange={e => setCertifications(e.target.value)} className="w-full border p-2 rounded" placeholder="SDVOSB, WOSB" />
+      </div>
+      <div>
+        <label className="block font-medium">Keywords (comma separated)</label>
+        <input value={keywords} onChange={e => setKeywords(e.target.value)} className="w-full border p-2 rounded" placeholder="cybersecurity, cloud" />
+      </div>
+      {error && <div className="text-red-600">{error}</div>}
+      <button disabled={loading} className="bg-blue-600 text-white px-4 py-2 rounded">
+        {loading ? 'Creating...' : 'Create account'}
+      </button>
+    </form>
+  )
+}
