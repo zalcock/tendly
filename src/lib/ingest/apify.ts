@@ -66,7 +66,8 @@ export async function handleApifyItems(items: any[], options: { sourceName?: str
       const scores: { company_id: string; opportunity_id: string; score: number; reasons_json: unknown }[] = []
       for (const company of companies as Company[]) {
         for (const opp of newOpps as Opportunity[]) {
-          scores.push(computeMatchScore(company, opp))
+          const { score, reasons } = computeMatchScore(company, opp)
+          scores.push({ company_id: company.id, opportunity_id: opp.id, score, reasons_json: reasons })
         }
       }
       if (scores.length > 0) {

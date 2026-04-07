@@ -12,9 +12,30 @@ export default function OnboardForm() {
   const [keywords, setKeywords] = useState('')
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
+  const [companyNameError, setCompanyNameError] = useState('')
+  const [naicsError, setNaicsError] = useState('')
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault()
+
+    // Client-side validation
+    let valid = true
+    setCompanyNameError('')
+    setNaicsError('')
+
+    if (!companyName.trim()) {
+      setCompanyNameError('Company name is required.')
+      valid = false
+    }
+
+    const naicsCodes = naics.split(',').map(s => s.trim()).filter(Boolean)
+    if (naicsCodes.length === 0) {
+      setNaicsError('At least one NAICS code is required.')
+      valid = false
+    }
+
+    if (!valid) return
+
     setLoading(true)
     setError('')
     try {
@@ -36,11 +57,13 @@ export default function OnboardForm() {
     <form onSubmit={handleSubmit} className="space-y-4">
       <div>
         <label className="block font-medium">Company name</label>
-        <input value={companyName} onChange={e => setCompanyName(e.target.value)} className="w-full border p-2 rounded" required />
+        <input value={companyName} onChange={e => setCompanyName(e.target.value)} className="w-full border p-2 rounded" />
+        {companyNameError && <p className="text-red-600 text-sm mt-1">{companyNameError}</p>}
       </div>
       <div>
         <label className="block font-medium">NAICS codes (comma separated)</label>
         <input value={naics} onChange={e => setNaics(e.target.value)} className="w-full border p-2 rounded" placeholder="e.g. 541511, 541512" />
+        {naicsError && <p className="text-red-600 text-sm mt-1">{naicsError}</p>}
       </div>
       <div>
         <label className="block font-medium">Location (City, State)</label>

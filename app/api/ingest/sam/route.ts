@@ -106,7 +106,7 @@ export async function GET(request: Request) {
         external_id: opp.noticeId,
         source_id: source?.id ?? null,
         title: opp.title ?? 'Untitled',
-        agency: opp.fullParentPathName ?? opp.organizationName ?? 'Unknown Agency',
+        agency: opp.fullParentPathName ?? opp.organizationName ?? '',
         sub_agency: opp.organizationName ?? null,
         naics_code: opp.naicsCode ?? null,
         procurement_method: opp.type ?? null,
@@ -149,7 +149,8 @@ export async function GET(request: Request) {
         const scores: { company_id: string; opportunity_id: string; score: number; reasons_json: unknown }[] = []
         for (const company of companies as Company[]) {
           for (const opp of newOpps as Opportunity[]) {
-            scores.push(computeMatchScore(company, opp))
+            const { score, reasons } = computeMatchScore(company, opp)
+            scores.push({ company_id: company.id, opportunity_id: opp.id, score, reasons_json: reasons })
           }
         }
         if (scores.length > 0) {
