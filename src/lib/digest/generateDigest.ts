@@ -14,7 +14,7 @@ export async function runDigestForAll({ sinceHours = 24, limit = 1000 } = {}) {
   // fetch profiles
   const { data: profiles, error } = await supabase
     .from('profiles')
-    .select('id,last_digest_at')
+    .select('id')
     .limit(limit)
 
   if (error) throw error
