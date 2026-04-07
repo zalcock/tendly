@@ -14,7 +14,7 @@ export default function SignupPage() {
           supabaseClient={supabase}
           appearance={{ theme: ThemeSupa }}
           providers={[]}
-          redirectTo="/onboard"
+          redirectTo={`${process.env.NEXT_PUBLIC_BASE_URL ?? ''}/onboard`}
           view="sign_up"
         />
       </div>

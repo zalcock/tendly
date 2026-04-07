@@ -14,7 +14,7 @@ export default function LoginPage() {
           supabaseClient={supabase}
           appearance={{ theme: ThemeSupa }}
           providers={[]}
-          redirectTo="/dashboard"
+          redirectTo={`${process.env.NEXT_PUBLIC_BASE_URL ?? ''}/dashboard`}
           view="sign_in"
         />
       </div>
