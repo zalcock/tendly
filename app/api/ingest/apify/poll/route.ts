@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server'
-import { handleApifyItems } from '../../../../src/lib/ingest/apify'
+import { handleApifyItems } from '../../../../../src/lib/ingest/apify'
 
 export async function POST(request: Request) {
   const token = process.env.APIFY_TOKEN || ''
