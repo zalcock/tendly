@@ -4,7 +4,8 @@ import { handleApifyItems } from '../../../../src/lib/ingest/apify'
 export async function POST(request: Request) {
   const secret = process.env.APIFY_WEBHOOK_SECRET || ''
   const header = request.headers.get('x-apify-secret') || request.headers.get('x-apify-signature') || ''
-  if (!secret || header !== secret) {
+  // If a secret is configured, require it. If not (dev), allow requests for testing.
+  if (secret && header !== secret) {
     return NextResponse.json({ ok: false, error: 'unauthorized' }, { status: 401 })
   }
 
