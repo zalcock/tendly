@@ -43,10 +43,18 @@ export async function runDigestForAll({ sinceHours = 24, limit = 1000 } = {}) {
         continue
       }
 
+      // find companies owned by this profile
+      const { data: companies } = await supabase.from('companies').select('id').eq('owner_id', p.id)
+      const companyIds = (companies || []).map((c: any) => c.id)
+      if (companyIds.length === 0) {
+        results.push({ profileId: p.id, emailSent: false, reason: 'no-companies' })
+        continue
+      }
+
       const { data: matchScores } = await supabase
         .from('match_scores')
         .select('id,score,opportunity_id,created_at')
-        .eq('company_id', p.id)
+        .in('company_id', companyIds)
         .gte('created_at', since)
 
       if (!matchScores || matchScores.length === 0) {
@@ -58,7 +66,7 @@ export async function runDigestForAll({ sinceHours = 24, limit = 1000 } = {}) {
       const opportunityIds = matchScores.map((m: any) => m.opportunity_id)
       const { data: opportunities } = await supabase
         .from('opportunities')
-        .select('id,title,agency,posted_at,url,proposal_due_at')
+        .select('id,title,agency,posted_at,url,proposals_due_at')
         .in('id', opportunityIds)
 
       const items = (opportunities || []).map((o: any) => `
@@ -74,20 +82,19 @@ export async function runDigestForAll({ sinceHours = 24, limit = 1000 } = {}) {
       `
 
       try {
-        await sendEmail(p.email, subject, html)
+        await sendEmail(email, subject, html)
       } catch (e) {
         results.push({ profileId: p.id, emailSent: false, error: String(e) })
         continue
       }
 
-      // record a notification
+      // record a notification (user_id references profiles.id)
       await supabase.from('notifications').insert([
         {
-          profile_id: p.id,
-          user_id: p.user_id,
+          user_id: p.id,
           type: 'daily_digest',
-          subject,
-          body: html,
+          data_json: { subject, html },
+          scheduled_at: new Date().toISOString(),
           sent_at: new Date().toISOString(),
         },
       ])
