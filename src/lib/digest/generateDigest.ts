@@ -11,11 +11,10 @@ export async function runDigestForAll({ sinceHours = 24, limit = 1000 } = {}) {
 
   console.log('runDigestForAll starting', { since, limit, RESEND_API_KEY: Boolean(process.env.RESEND_API_KEY) })
 
-  // fetch profiles with an email
+  // fetch profiles
   const { data: profiles, error } = await supabase
     .from('profiles')
-    .select('id,user_id,email,last_digest_at')
-    .not('email', 'is', null)
+    .select('id,last_digest_at')
     .limit(limit)
 
   if (error) throw error
@@ -23,10 +22,31 @@ export async function runDigestForAll({ sinceHours = 24, limit = 1000 } = {}) {
 
   for (const p of profiles || []) {
     try {
+      // try to resolve email from auth admin API (service role key required)
+      let email: string | null = null
+      try {
+        // supabase.auth.admin.getUserById may exist in this client
+        // @ts-ignore
+        if (supabase.auth && supabase.auth.admin && typeof supabase.auth.admin.getUserById === 'function') {
+          // @ts-ignore
+          const u = await supabase.auth.admin.getUserById(p.id)
+          if (u && u.data && u.data.user && u.data.user.email) email = u.data.user.email
+        }
+      } catch (e) {
+        // ignore
+      }
+
+      // fallback if profile row contains email field (older schema)
+      if (!email && (p as any).email) email = (p as any).email
+      if (!email) {
+        results.push({ profileId: p.id, emailSent: false, reason: 'no-email' })
+        continue
+      }
+
       const { data: matchScores } = await supabase
         .from('match_scores')
         .select('id,score,opportunity_id,created_at')
-        .eq('profile_id', p.id)
+        .eq('company_id', p.id)
         .gte('created_at', since)
 
       if (!matchScores || matchScores.length === 0) {
