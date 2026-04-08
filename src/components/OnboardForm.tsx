@@ -44,7 +44,9 @@ export default function OnboardForm() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ companyName, naics, location, certifications, keywords }),
       })
-      if (!res.ok) throw new Error('Failed to create company')
+      const data = await res.json()
+      if (!res.ok) throw new Error(data.error ?? 'Failed to create company')
+      router.refresh()
       router.push('/dashboard')
     } catch (err: any) {
       setError(err.message)
