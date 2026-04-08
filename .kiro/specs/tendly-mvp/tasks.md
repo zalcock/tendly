@@ -27,7 +27,7 @@ The design document uses TypeScript (Next.js 16 App Router). All implementation 
     - Export `ScoringReason` interface from `lib/matching.ts`
     - _Requirements: 4.2, 4.3, 4.4, 4.5, 4.6_
 
-  - [ ]* 2.2 Write property test for match score bounds and formula (Property 8)
+  - [x] 2.2 Write property test for match score bounds and formula (Property 8)
     - Install `fast-check` and `vitest` as dev dependencies: `pnpm add -D fast-check vitest @vitest/coverage-v8`
     - Create `lib/__tests__/matching.test.ts`
     - **Property 8: Match score formula is correct and bounded**
@@ -41,7 +41,7 @@ The design document uses TypeScript (Next.js 16 App Router). All implementation 
     - Sort results by `score DESC`; return `{ matches, trialExpiresAt, trialActive }`
     - _Requirements: 5.1, 5.2, 5.5, 6.6_
 
-  - [ ]* 3.2 Write property tests for feed route logic (Properties 7, 10, 11, 12, 14)
+  - [x] 3.2 Write property tests for feed route logic (Properties 7, 10, 11, 12, 14)
     - Test score threshold filter, sort order, expired opportunity exclusion, trial expiry 403, and user isolation using mocked Supabase responses
     - **Property 7: Expired opportunities excluded from feed**
     - **Property 10: Feed only returns matches above score threshold**
@@ -57,7 +57,7 @@ The design document uses TypeScript (Next.js 16 App Router). All implementation 
     - Fix the internal match trigger: replace the `fetch` call to `/api/match/run` with a direct import and call to the matching logic (avoids cold-start race condition)
     - _Requirements: 2.3, 2.4, 2.5, 6.1_
 
-  - [ ]* 4.2 Write property test for onboarding validation (Property 2)
+  - [x] 4.2 Write property test for onboarding validation (Property 2)
     - **Property 2: Onboarding validation rejects incomplete submissions**
     - **Validates: Requirements 2.4**
 
@@ -72,7 +72,7 @@ The design document uses TypeScript (Next.js 16 App Router). All implementation 
     - Set `trial_started_at` on first authenticated request if not yet set
     - _Requirements: 1.8, 2.1, 6.1, 6.4, 8.1_
 
-  - [ ]* 5.2 Write property test for middleware routing rules (Property 1)
+  - [x] 5.2 Write property test for middleware routing rules (Property 1)
     - **Property 1: Protected routes redirect unauthenticated users**
     - **Validates: Requirements 1.8**
 
@@ -158,7 +158,7 @@ The design document uses TypeScript (Next.js 16 App Router). All implementation 
     - Subject: `Tendly: X new contract matches for [Company Name]`
     - _Requirements: 7.1, 7.2, 7.3, 7.4, 7.5, 7.7_
 
-  - [ ]* 11.2 Write property tests for digest pipeline (Properties 16, 17, 18, 19)
+  - [x] 11.2 Write property tests for digest pipeline (Properties 16, 17, 18, 19)
     - **Property 16: Digest is sent only to users with new matches above threshold**
     - **Property 17: Digest email content is complete and correctly ordered**
     - **Property 18: Digest delivery is recorded in notifications**
@@ -172,7 +172,7 @@ The design document uses TypeScript (Next.js 16 App Router). All implementation 
     - Confirm field mapping covers `title`, `agency`, `synopsis`, `sam_or_source_url` as non-null with fallbacks
     - _Requirements: 3.2, 3.4, 3.5, 3.6_
 
-  - [ ]* 12.2 Write property tests for ingestion pipeline (Properties 3, 4, 5, 6, 9)
+  - [x] 12.2 Write property tests for ingestion pipeline (Properties 3, 4, 5, 6, 9)
     - **Property 3: Ingestion upsert is idempotent**
     - **Property 4: Ingestion run always reaches terminal status**
     - **Property 5: Failed ingestion preserves existing opportunities**
@@ -192,16 +192,16 @@ The design document uses TypeScript (Next.js 16 App Router). All implementation 
   - Confirm `/api/feed/my` returns sorted, threshold-filtered, non-expired matches
   - Confirm `/api/onboard/create` sets `trial_started_at` and triggers match computation
 
-- [ ] 15. Property-based tests — trial and data-preservation properties
-  - [ ]* 15.1 Write property test for trial expiry computation (Property 13)
+- [x] 15. Property-based tests — trial and data-preservation properties
+  - [x] 15.1 Write property test for trial expiry computation (Property 13)
     - **Property 13: Trial expiry is exactly 24 hours after trial start**
     - **Validates: Requirements 6.2**
 
-  - [ ]* 15.2 Write property test for trial data preservation (Property 15)
+  - [x] 15.2 Write property test for trial data preservation (Property 15)
     - **Property 15: Trial expiry does not delete user data**
     - **Validates: Requirements 6.7**
 
-  - [ ]* 15.3 Write property test for admin endpoint auth (Property 20)
+  - [x] 15.3 Write property test for admin endpoint auth (Property 20)
     - **Property 20: Admin trigger endpoints require valid CRON_SECRET**
     - **Validates: Requirements 8.7**
 
