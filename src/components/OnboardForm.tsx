@@ -81,7 +81,7 @@ export default function OnboardForm() {
       </div>
       {error && <div className="text-red-600">{error}</div>}
       <button disabled={loading} className="bg-blue-600 text-white px-4 py-2 rounded">
-        {loading ? 'Creating...' : 'Create account'}
+        {loading ? 'Saving...' : 'Save & find my contracts'}
       </button>
     </form>
   )
