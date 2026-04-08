@@ -26,19 +26,13 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: 'At least one NAICS code is required' }, { status: 400 })
   }
 
-  const supabase = await createServerSupabaseClient()
-  const { data: { user } } = await supabase.auth.getUser()
+  // Authenticate via session client
+  const sessionClient = await createServerSupabaseClient()
+  const { data: { user } } = await sessionClient.auth.getUser()
   if (!user) return NextResponse.json({ error: 'Not authenticated' }, { status: 401 })
 
-  // Create company
-  const companyRes = await supabase
-    .from('companies')
-    .insert([{ name: companyName, owner_id: user.id }])
-    .select()
-  if (companyRes.error) {
-    return NextResponse.json({ error: companyRes.error.message }, { status: 500 })
-  }
-  const company = companyRes.data[0]
+  // Use service role client for all DB writes to bypass RLS
+  const supabase = createServiceRoleClient()
 
   const certList: string[] = certifications
     ? certifications.split(',').map((s: string) => s.trim()).filter(Boolean)
@@ -47,24 +41,28 @@ export async function POST(req: Request) {
     ? keywords.split(',').map((s: string) => s.trim()).filter(Boolean)
     : []
 
-  // Upsert profile
-  const profileRes = await supabase
+  // Ensure profile row exists (profiles.name is NOT NULL in schema)
+  await supabase
     .from('profiles')
-    .upsert([
-      {
-        id: user.id,
-        company_id: company.id,
-        naics: naicsList,
-        location,
-        certifications: certList,
-        keywords: keywordList,
-      },
-    ])
+    .upsert([{ id: user.id, name: user.email ?? 'User' }], { onConflict: 'id', ignoreDuplicates: true })
+
+  // Create company with full profile data
+  const companyRes = await supabase
+    .from('companies')
+    .insert([{
+      name: companyName,
+      owner_id: user.id,
+      naics_codes: naicsList,
+      socio_economic_certs: certList,
+      target_geographies: location ? [location] : [],
+      capability_keywords: keywordList,
+    }])
     .select()
 
-  if (profileRes.error) {
-    return NextResponse.json({ error: profileRes.error.message }, { status: 500 })
+  if (companyRes.error) {
+    return NextResponse.json({ error: companyRes.error.message }, { status: 500 })
   }
+  const company = companyRes.data[0]
 
   // Set trial_started_at if not already set
   await supabase
@@ -73,12 +71,10 @@ export async function POST(req: Request) {
     .eq('id', user.id)
     .is('trial_started_at', null)
 
-  // Run matching inline using service role client (bypasses RLS)
-  const serviceClient = createServiceRoleClient()
-
-  const { data: opportunities } = await serviceClient
+  // Run matching inline
+  const { data: opportunities } = await supabase
     .from('opportunities')
-    .select('*')
+    .select('id, naics_code, set_aside, place_of_performance, value_max, value_min, title, synopsis')
 
   if (opportunities && opportunities.length > 0) {
     const companyProfile: CompanyProfile = {
@@ -99,7 +95,7 @@ export async function POST(req: Request) {
       }
     })
 
-    await serviceClient
+    await supabase
       .from('match_scores')
       .upsert(matchRows, { onConflict: 'company_id,opportunity_id' })
   }
