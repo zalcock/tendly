@@ -1,8 +1,12 @@
-import { createClient } from '@supabase/supabase-js'
+import { createServerClient } from '@supabase/ssr'
 import RunDigestButton from '../../../src/components/RunDigestButton'
 
 export default async function Page() {
-  const supabase = createClient(process.env.NEXT_PUBLIC_SUPABASE_URL!, process.env.SUPABASE_SERVICE_ROLE_KEY!)
+  const supabase = createServerClient(
+    process.env.NEXT_PUBLIC_SUPABASE_URL!,
+    process.env.SUPABASE_SERVICE_ROLE_KEY!,
+    { cookies: { getAll: () => [], setAll: () => {} } }
+  )
   const { data: runs } = await supabase.from('digest_runs').select('*').order('started_at', { ascending: false }).limit(50)
 
   return (

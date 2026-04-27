@@ -216,3 +216,110 @@ The design document uses TypeScript (Next.js 16 App Router). All implementation 
 - Property tests use `fast-check` with `numRuns: 100` minimum; tag each test with `// Feature: tendly-mvp, Property N: <title>`
 - The `src/` directory contains the active component and lib code; `app/` contains route handlers and pages — keep this split consistent
 - Supabase SSR client (`@supabase/ssr`) must be used in middleware and server components; the service role client is only for server-side route handlers and lib functions
+
+---
+
+## Bugfix Tasks — Content Rendering & SEO
+
+- [x] 17. Write bug condition exploration tests (BEFORE implementing fixes)
+  - **Property 1: Bug Condition** - Homepage Redirect, Key Leak, Missing Metadata
+  - **CRITICAL**: These tests MUST FAIL on unfixed code — failure confirms the bugs exist
+  - **DO NOT attempt to fix the tests or the code when they fail**
+  - **GOAL**: Surface counterexamples that demonstrate each bug on the current codebase
+  - Create `app/__tests__/bugfix-exploration.test.ts`
+  - **Test 1 — Homepage redirect bug**: Import `app/page.tsx` default export; render it in a test environment; assert the response does NOT issue a redirect to `/admin/ingestion` and the component body contains landing page content. On unfixed code this FAILS because `redirect('/admin/ingestion')` is called unconditionally.
+    - Counterexample to document: `GET /` → 307 redirect to `/admin/ingestion` instead of 200 landing page
+    - Bug condition: `isBugCondition_1(X)` where `X.path = '/'` AND `X.responseStatusCode = 307`
+  - **Test 2 — Translation key leak bug**: Render the root page component and assert no visible text node matches the pattern `/\b\w+\.\w+(\.\w+)+\b/` (dot-notation i18n keys). On unfixed code any `t('some.key')` call site would leak a raw key string.
+    - Counterexample to document: visible text contains `home.hero.title` instead of resolved English string
+    - Bug condition: `isBugCondition_2(X)` where `X.visibleText MATCHES /\b\w+\.\w+(\.\w+)+\b/`
+  - **Test 3 — Missing metadata bug**: Assert that `app/page.tsx` exports a `metadata` object with `title !== 'Tendly'` and `openGraph` defined. Assert `app/login/page.tsx` and `app/signup/page.tsx` each export a `metadata` object with a page-specific title. On unfixed code all three pages export no `metadata`.
+    - Counterexample to document: `metadata` is `undefined` on all individual page segments; no OG tags in `<head>`
+    - Bug condition: `isBugCondition_3(X)` where `X.headTitle = 'Tendly'` AND `X.ogTitle = ''`
+  - Run all three tests on UNFIXED code
+  - **EXPECTED OUTCOME**: All three tests FAIL (this is correct — it proves the bugs exist)
+  - Document each counterexample found to confirm root cause before implementing fixes
+  - Mark task complete when tests are written, run, and failures are documented
+  - _Requirements: 1.1, 1.2, 1.3_
+
+- [x] 18. Write preservation property tests (BEFORE implementing fixes)
+  - **Property 2: Preservation** - Authenticated Flows Unaffected by Homepage/SEO Fix
+  - **IMPORTANT**: Follow observation-first methodology — observe UNFIXED code behaviour first
+  - Create `app/__tests__/bugfix-preservation.test.ts`
+  - **Observe on unfixed code** (paths other than `/` are unaffected by the three bugs):
+    - `GET /dashboard` with valid session → middleware allows through, page renders feed
+    - `GET /dashboard` with no session → middleware redirects to `/login`
+    - `GET /admin/ingestion` with OWNER role → 200 with ingestion page
+    - `POST /api/onboard/create` with valid payload → 200, company row created
+    - `GET /api/feed/my` with expired trial → 403 `{ error: 'trial_expired' }`
+  - Write property-based tests using `fast-check` that generate random combinations of:
+    - Authenticated state (session present / absent)
+    - User role (`OWNER` / non-OWNER)
+    - Trial status (active / expired)
+    - Path (any path from the set `/dashboard`, `/onboard`, `/admin/*`, `/login`, `/signup`, `/paywall`, `/api/*`)
+  - Assert: for all inputs where `NOT isBugCondition(X)` (i.e. path ≠ `/`), the fixed codebase produces the same response as the original
+  - Verify all preservation tests PASS on UNFIXED code before proceeding
+  - **EXPECTED OUTCOME**: Tests PASS on unfixed code (confirms baseline behaviour to preserve)
+  - Mark task complete when tests are written, run, and passing on unfixed code
+  - _Requirements: 3.1, 3.2, 3.3, 3.4, 3.5, 3.6_
+
+- [x] 19. Fix — Homepage redirect, translation key leak, and SEO metadata
+
+  - [x] 19.1 Replace homepage redirect with landing page (`app/page.tsx`)
+    - Remove `import { redirect } from 'next/navigation'` and the `redirect('/admin/ingestion')` call
+    - Write a server component that renders a marketing landing page with:
+      - Headline: "Find Government Contracts That Match Your Business"
+      - Sub-headline value proposition (hardcoded English — no i18n function calls)
+      - Primary CTA button linking to `/signup` (styled with Action Mint `#00D1B2`)
+      - Secondary CTA link to `/login`
+      - Apply Federal Blue (`#1B365D`) for headings; use `geistSans` font variable already loaded in root layout
+    - Export `metadata` with:
+      - `title: "Tendly — Find Government Contracts That Match Your Business"`
+      - `description: "Tendly matches your business profile to active SAM.gov solicitations. Find government contracts, filter by set-aside, and never miss a deadline."`
+      - `openGraph: { title, description, type: 'website' }`
+    - All strings MUST be hardcoded English — do NOT use any translation function or dot-notation key
+    - _Bug_Condition: isBugCondition_1 — X.path = '/' AND X.responseStatusCode = 307_
+    - _Expected_Behavior: HTTP 200, body contains landing page content, no redirect to /admin_
+    - _Preservation: requests to all other paths are unaffected_
+    - _Requirements: 2.1_
+
+  - [x] 19.2 Remove i18n indirection — hardcode all English strings (`app/page.tsx` and any other affected components)
+    - Audit all `.tsx` files for calls to any translation function (e.g. `t('...')`, `useTranslation`, `getTranslations`) or raw dot-notation string literals used as display text
+    - Replace every occurrence with the resolved hardcoded English string inline
+    - The landing page created in 19.1 must be written with hardcoded strings from the start
+    - If a translation utility file exists (e.g. `lib/i18n.ts`, `utils/t.ts`), remove it or replace with a no-op — prefer removing call sites entirely
+    - Verify no visible text in any `.tsx` file matches `/\b\w+\.\w+(\.\w+)+\b/` after changes
+    - _Bug_Condition: isBugCondition_2 — X.visibleText MATCHES /\b\w+\.\w+(\.\w+)+\b/_
+    - _Expected_Behavior: all user-facing strings are resolved human-readable English text_
+    - _Preservation: component logic and data-fetching are unaffected_
+    - _Requirements: 2.2_
+
+  - [x] 19.3 Add per-page metadata and extend root layout Open Graph (`app/layout.tsx`, `app/login/page.tsx`, `app/signup/page.tsx`)
+    - **`app/layout.tsx`**: extend `metadata` export to add `metadataBase` (from `NEXT_PUBLIC_BASE_URL`), `openGraph: { title, description, type: 'website' }`, and `twitter: { card: 'summary_large_image' }` as site-wide fallbacks
+    - **`app/login/page.tsx`**: because this is a `'use client'` component, add a thin server-component wrapper file (e.g. `app/login/layout.tsx` or split into `app/login/page.tsx` as server shell + `LoginClient.tsx` as client widget) that exports `metadata = { title: "Log in — Tendly", description: "Log in to your Tendly account to view your personalized government contract matches." }`
+    - **`app/signup/page.tsx`**: same pattern — export `metadata = { title: "Sign up — Tendly", description: "Create a free Tendly account and start finding government contracts that match your business in minutes." }`
+    - Metadata for `app/page.tsx` is already handled in task 19.1
+    - _Bug_Condition: isBugCondition_3 — X.headTitle = 'Tendly' AND X.ogTitle = ''_
+    - _Expected_Behavior: every public page returns page-specific title, non-empty description, and OG tags_
+    - _Preservation: authenticated page metadata (dashboard, admin, onboard, paywall) is unaffected_
+    - _Requirements: 2.3_
+
+  - [x] 19.4 Verify bug condition exploration tests now pass
+    - **Property 1: Expected Behavior** - Homepage Renders, No Key Leak, Rich Metadata
+    - **IMPORTANT**: Re-run the SAME tests from task 17 — do NOT write new tests
+    - The tests from task 17 encode the expected behaviour; when they pass the bugs are fixed
+    - Run `pnpm vitest --run app/__tests__/bugfix-exploration.test.ts`
+    - **EXPECTED OUTCOME**: All three tests PASS (confirms all three bugs are fixed)
+    - _Requirements: 2.1, 2.2, 2.3_
+
+  - [x] 19.5 Verify preservation tests still pass
+    - **Property 2: Preservation** - Authenticated Flows Unaffected
+    - **IMPORTANT**: Re-run the SAME tests from task 18 — do NOT write new tests
+    - Run `pnpm vitest --run app/__tests__/bugfix-preservation.test.ts`
+    - **EXPECTED OUTCOME**: All preservation tests PASS (confirms no regressions in auth, middleware, or API flows)
+
+- [x] 20. Checkpoint — ensure all bugfix tests pass
+  - Run `pnpm vitest --run` and confirm all tests pass (both existing MVP tests and new bugfix tests)
+  - Verify in a browser (or with `curl`) that `GET /` returns a 200 landing page and not a redirect
+  - Verify page source for `/`, `/login`, `/signup` contains page-specific `<title>` and `<meta property="og:title">` tags
+  - Ensure all tests pass; ask the user if questions arise

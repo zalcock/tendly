@@ -39,8 +39,9 @@ export async function middleware(request: NextRequest) {
 
   const { pathname } = request.nextUrl
 
-  // Rule 1: no session → redirect to /login
+  // Rule 1: no session → redirect to /login (but allow / for the landing page)
   if (!user) {
+    if (pathname === '/') return response
     return NextResponse.redirect(new URL('/login', request.url))
   }
 

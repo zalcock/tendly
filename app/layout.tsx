@@ -16,6 +16,15 @@ const geistMono = Geist_Mono({
 export const metadata: Metadata = {
   title: "Tendly",
   description: "AI-powered government contract matching for small businesses",
+  metadataBase: new URL(process.env.NEXT_PUBLIC_BASE_URL ?? 'https://tendly.eu'),
+  openGraph: {
+    title: 'Tendly',
+    description: 'AI-powered government contract matching for small businesses',
+    type: 'website',
+  },
+  twitter: {
+    card: 'summary_large_image',
+  },
 };
 
 export default function RootLayout({

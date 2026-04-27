@@ -1,601 +1,407 @@
-# Design Document: Tendly MVP
+# Tendly MVP — Bugfix Design
 
 ## Overview
 
-Tendly is a government contract matching platform for small businesses. The MVP is a Next.js 16 App Router application deployed on Vercel, backed by Supabase (auth, Postgres, RLS) and Apify (SAM.gov scraping). Users sign up, complete a one-time onboarding form, and immediately see a personalized feed of federal contract opportunities scored against their NAICS codes, certifications, and geography. A daily email digest keeps them informed without requiring daily logins. Access is gated to a 24-hour pilot window.
+Three bugs prevent the Tendly platform from functioning as a production-ready, publicly
+discoverable SaaS product:
 
-The codebase is already partially built. This design describes the complete system as it should exist at pilot launch, including gaps that need to be filled.
+1. **Homepage redirect** — `app/page.tsx` unconditionally calls `redirect('/admin/ingestion')`,
+   so no visitor ever sees a landing page.
+2. **Translation key leak** — the codebase was scaffolded with an i18n layer in mind but no
+   i18n library was ever installed or configured. Any component that calls a translation
+   function (e.g. `t('home.hero.title')`) would render the raw key string instead of resolved
+   text. For the MVP the fix is to remove the i18n indirection and use hardcoded English strings
+   directly in components.
+3. **Missing SEO metadata** — only `app/layout.tsx` exports a `metadata` object, and it
+   contains only a generic title and description with no Open Graph tags. Individual pages
+   (`/login`, `/signup`, `/onboard`, `/dashboard`, `/paywall`) export no `metadata` at all,
+   so every page inherits the same undifferentiated fallback.
 
----
-
-## Architecture
-
-```mermaid
-graph TD
-    Browser["Browser (Next.js App Router)"]
-    Vercel["Vercel (serverless + cron)"]
-    Supabase["Supabase (Postgres + Auth + RLS)"]
-    Apify["Apify (fortuitous_pirate/sam-gov-scraper)"]
-    Resend["Resend (transactional email)"]
-
-    Browser -->|HTTPS| Vercel
-    Vercel -->|Supabase JS SDK| Supabase
-    Vercel -->|Apify REST API| Apify
-    Apify -->|Webhook POST /api/ingest/apify/webhook| Vercel
-    Vercel -->|Resend REST API| Resend
-    Vercel -->|Cron triggers| Vercel
-```
-
-**Key architectural decisions:**
-
-- All server-side logic runs as Next.js Route Handlers (serverless functions on Vercel). No separate backend process.
-- Supabase RLS enforces data isolation at the database layer — users can only read their own companies and match scores.
-- The matching engine (`lib/matching.ts`) is a pure TypeScript function, called inline after ingestion and after onboarding. No separate worker.
-- Apify delivers results via webhook to `/api/ingest/apify/webhook`. A fallback poll route exists for manual triggering.
-- Vercel cron jobs (defined in `vercel.json`) trigger ingestion and digest on a daily schedule. All cron-triggered routes require a `CRON_SECRET` bearer token.
-- Trial enforcement is implemented in Next.js middleware (redirect for page routes) and in the `/api/feed/my` route handler (403 for API routes).
+The fix strategy is minimal and targeted: replace the redirect with a real landing page
+component, remove i18n indirection in favour of direct strings, and add per-page `metadata`
+exports plus Open Graph fields to the root layout.
 
 ---
 
-## Page and Route Structure
+## Glossary
 
-### Pages (App Router)
-
-| Route | Auth Required | Description |
-|---|---|---|
-| `/` | No | Landing / marketing page |
-| `/login` | No | Supabase Auth UI login |
-| `/signup` | No | Supabase Auth UI sign-up |
-| `/onboard` | Yes (no company) | One-time onboarding form |
-| `/dashboard` | Yes + trial active | Personalized match feed |
-| `/dashboard/settings` | Yes | Edit company profile |
-| `/admin` | Yes + OWNER role | Admin overview |
-| `/admin/ingestion` | Yes + OWNER role | Ingestion run history + trigger |
-| `/admin/digest` | Yes + OWNER role | Digest run history + trigger |
-| `/admin/users` | Yes + OWNER role | User list with trial status |
-| `/paywall` | Yes + trial expired | Trial-ended screen with CTA |
-
-### API Routes
-
-| Route | Method | Auth | Description |
-|---|---|---|---|
-| `/api/onboard/create` | POST | Session | Create company profile, trigger initial match |
-| `/api/feed/my` | GET | Session + trial | Return scored matches for current user |
-| `/api/ingest/sam/run` | GET | CRON_SECRET | Run SAM.gov ingestion via direct API |
-| `/api/ingest/apify/webhook` | POST | APIFY_WEBHOOK_SECRET | Receive Apify actor results |
-| `/api/ingest/apify/poll` | POST | CRON_SECRET | Poll Apify for latest run results |
-| `/api/digest/run` | POST | CRON_SECRET | Run daily digest for all active users |
-| `/api/match/run` | POST | CRON_SECRET or internal | Recompute matches for a company |
-
-### Middleware
-
-`middleware.ts` at the project root handles:
-1. Unauthenticated users → redirect to `/login`
-2. Authenticated users with no company → redirect to `/onboard`
-3. Authenticated users with expired trial → redirect to `/paywall`
-4. Non-OWNER users accessing `/admin/*` → redirect to `/dashboard`
-
-The middleware reads the Supabase session cookie and queries `profiles` + `companies` to determine routing. It uses the Supabase SSR client (`@supabase/ssr`) to avoid exposing the service role key.
+- **Bug_Condition (C)**: The set of page requests that trigger at least one of the three bugs —
+  a root-URL visit that redirects, a render that outputs a dot-notation key, or a page response
+  that carries no meaningful SEO metadata.
+- **Property (P)**: The desired correct behaviour for each buggy input — landing page renders,
+  human-readable text appears, and rich metadata is present in the HTML `<head>`.
+- **Preservation**: All authenticated flows (dashboard, onboard, admin, paywall, login, signup)
+  and all API routes must behave identically after the fix.
+- **`app/page.tsx`**: The Next.js App Router root segment. Currently contains only an
+  unconditional `redirect()` call.
+- **`app/layout.tsx`**: The root layout. Exports a single shared `metadata` object used as the
+  fallback for every page.
+- **`generateMetadata` / `export const metadata`**: Next.js App Router mechanisms for
+  per-segment metadata. Static pages use `export const metadata`; dynamic pages use
+  `generateMetadata`.
+- **i18n key leak**: A string of the form `namespace.key.subkey` rendered as visible text
+  because no translation function resolved it to a human-readable string.
 
 ---
 
-## Components and Interfaces
+## Bug Details
 
-### Existing Components (to be completed)
+### Bug 1 — Homepage Redirect
 
-**`src/components/OnboardForm.tsx`** — collects company name, NAICS codes (comma-separated), location, certifications, keywords. POSTs to `/api/onboard/create`. Needs client-side validation: company name required, at least one NAICS code required.
+The root page component performs an unconditional server-side redirect before rendering any
+content. No landing page is ever shown to any visitor, authenticated or not.
 
-**`src/components/DashboardFeed.tsx`** — fetches `/api/feed/my`, renders match cards. Needs: score badge, deadline urgency indicator (red/amber for ≤7 days), SAM.gov link, empty state message, trial countdown banner.
-
-**`src/components/RunIngestionButton.tsx`** — admin button that POSTs to `/api/ingest/sam/run` with CRON_SECRET header.
-
-**`src/components/RunDigestButton.tsx`** — admin button that POSTs to `/api/digest/run` with CRON_SECRET header.
-
-### New Components Needed
-
-**`TrialCountdown`** — displays remaining pilot window time. Reads `trial_started_at` from profile, computes expiry, shows `HH:MM:SS` or `X hours remaining`. Hides when trial is expired.
-
-**`PaywallScreen`** — full-page overlay shown when trial is expired. Contains CTA (email link or waitlist form).
-
-**`ProfileSummary`** — sidebar/header showing company name and active certifications.
-
-**`AdminUserTable`** — table of users with company name, `trial_started_at`, computed `trial_expires_at`, and status badge (Active / Expired).
-
-### Key Interfaces
-
-```typescript
-// /api/feed/my response
-interface FeedResponse {
-  matches: MatchWithOpportunity[]
-  trialExpiresAt: string // ISO timestamp
-  trialActive: boolean
-}
-
-interface MatchWithOpportunity {
-  id: string
-  score: number
-  reasons_json: ScoringReason[]
-  opportunity: {
-    id: string
-    title: string
-    agency: string
-    naics_code: string | null
-    set_aside: string | null
-    place_of_performance: string | null
-    value_min: number | null
-    value_max: number | null
-    proposals_due_at: string | null
-    sam_or_source_url: string
-  }
-}
-
-interface ScoringReason {
-  reason: string
-  contribution: number
-}
+**Formal Specification:**
 ```
+FUNCTION isBugCondition_1(X)
+  INPUT: X of type PageRequest
+  OUTPUT: boolean
+
+  RETURN X.path = '/'
+         AND X.responseStatusCode = 307
+         AND X.responseLocation = '/admin/ingestion'
+END FUNCTION
+```
+
+**Examples:**
+- Unauthenticated visitor hits `/` → 307 redirect to `/admin/ingestion` (bug: should render landing page)
+- Search engine crawler hits `/` → 307 redirect (bug: crawler follows redirect to admin, no landing page indexed)
+- Authenticated non-admin user hits `/` → 307 redirect to `/admin/ingestion` (bug: admin page shown to regular user)
+
+### Bug 2 — Translation Key Leak
+
+No i18n library (`next-intl`, `react-i18next`, etc.) is present in `package.json`. Any
+component that calls a translation function would receive the raw key string as output because
+the function is either undefined or returns its argument unchanged.
+
+**Formal Specification:**
+```
+FUNCTION isBugCondition_2(X)
+  INPUT: X of type RenderedPageOutput
+  OUTPUT: boolean
+
+  RETURN X.visibleText MATCHES_PATTERN /\b\w+\.\w+(\.\w+)+\b/
+         // i.e. visible text contains dot-notation strings like "home.hero.title"
+END FUNCTION
+```
+
+**Examples:**
+- Landing page renders `home.hero.title` instead of "Find Government Contracts That Match Your Business"
+- Navigation renders `nav.login` instead of "Log in"
+- CTA button renders `home.cta.getStarted` instead of "Get started free"
+
+### Bug 3 — Missing SEO Metadata
+
+Individual page segments export no `metadata` object. The root layout fallback provides only
+`title: "Tendly"` and a single description string, with no Open Graph or Twitter card tags.
+
+**Formal Specification:**
+```
+FUNCTION isBugCondition_3(X)
+  INPUT: X of type PageHTMLResponse
+  OUTPUT: boolean
+
+  RETURN (
+    X.headTitle = 'Tendly'                    // generic fallback, not page-specific
+    AND X.metaDescription = ''                // missing or empty
+    OR X.ogTitle = ''                         // no Open Graph title
+    OR X.ogDescription = ''                   // no Open Graph description
+  )
+END FUNCTION
+```
+
+**Examples:**
+- `/` returns `<title>Tendly</title>` with no description or OG tags (bug: should have rich landing page metadata)
+- `/login` returns `<title>Tendly</title>` (bug: should be "Log in — Tendly")
+- Sharing any page on Slack/Twitter shows no preview card (bug: no OG tags)
 
 ---
 
-## Data Models
+## Expected Behavior
 
-The schema is defined in `supabase/migrations/`. Key tables and their roles in the MVP:
+### Preservation Requirements
 
-### `profiles`
-Extends `auth.users`. Needs two additional columns not yet in migration 001:
-- `trial_started_at timestamptz` — set on first login
-- `last_digest_at timestamptz` — updated after each digest send
+The following behaviours must be completely unchanged by this fix:
 
-```sql
-alter table public.profiles
-  add column if not exists trial_started_at timestamptz,
-  add column if not exists last_digest_at timestamptz;
-```
+**Unchanged Behaviors:**
+- Authenticated users navigating to `/dashboard` continue to see their personalized contract feed.
+- Unauthenticated users navigating to `/dashboard` or `/onboard` continue to be redirected to `/login` by middleware.
+- Admin users navigating to `/admin/ingestion`, `/admin/digest`, `/admin/users` continue to see the respective admin pages.
+- Users completing sign-up continue to be redirected to `/onboard`.
+- Users completing onboarding continue to be redirected to `/dashboard`.
+- The `/api/feed/my` endpoint continues to return 403 after trial expiry.
+- All API routes (`/api/ingest/*`, `/api/digest/run`, `/api/onboard/create`) continue to function identically.
 
-### `companies`
-One row per user (owner_id = profiles.id). Key matching fields:
-- `naics_codes text[]` — array of NAICS codes
-- `socio_economic_certs text[]` — e.g. `['SDVOSB', 'WOSB']`
-- `target_geographies text[]` — e.g. `['Texas', 'Virginia']`
-- `capability_keywords text[]` — free-text keywords
-
-### `opportunities`
-Ingested from SAM.gov / Apify. Conflict key: `(external_id, source_id)`. Active opportunities: `proposals_due_at > now()`.
-
-### `match_scores`
-One row per `(company_id, opportunity_id)` pair. Conflict key enforces upsert semantics. Score range: 0–100. `reasons_json` is an array of `{reason, contribution}` objects.
-
-### `ingestion_runs`
-Audit log for each ingestion execution. Status lifecycle: `STARTED → SUCCESS | FAILED`.
-
-### `digest_runs`
-Audit log for each digest execution. Columns: `started_at`, `finished_at`, `status`, `total_users`, `emails_sent`, `error_json`.
-
-### `notifications`
-One row per sent digest per user. `type = 'daily_digest'`. The `notifications.type` check constraint in migration 001 currently only allows `NEW_HIGH_FIT`, `DEADLINE_REMINDER`, `RFP_AMENDMENT` — needs to be updated to include `daily_digest`.
-
-```sql
-alter table public.notifications
-  drop constraint if exists notifications_type_check;
-alter table public.notifications
-  add constraint notifications_type_check
-  check (type in ('NEW_HIGH_FIT','DEADLINE_REMINDER','RFP_AMENDMENT','daily_digest'));
-```
-
-### RLS Summary
-
-| Table | Policy |
-|---|---|
-| `profiles` | Users read/update own row |
-| `companies` | Users read/insert/update own row (owner_id = auth.uid()) |
-| `opportunities` | Public read |
-| `match_scores` | Read by company owner |
-| `notifications` | Read by user (user_id = auth.uid()) |
-| `ingestion_runs` | Service role only (no user-facing RLS needed) |
-| `digest_runs` | Service role only |
+**Scope:**
+All requests that do NOT match the three bug conditions above are completely unaffected by
+this fix. This includes:
+- Any request to a path other than `/`
+- Any authenticated page render (dashboard, onboard, admin, paywall)
+- Any API route call
+- Any middleware redirect for auth/trial enforcement
 
 ---
 
-## Matching Engine Design
+## Hypothesized Root Cause
 
-The matching engine is a pure function in `lib/matching.ts`. It is called:
-1. After each ingestion run — for all companies × all newly ingested opportunities
-2. After onboarding — for the new company × all existing opportunities
-3. After a profile update — for the updated company × all existing opportunities
+### Bug 1 — Homepage Redirect
 
-### Scoring Formula
+The redirect was intentionally added during early development as a shortcut to reach the admin
+ingestion page quickly. The comment in the file confirms this: `// redirect to admin ingestion
+page as default landing for dev/admin`. It was never replaced with a real landing page
+implementation.
 
-| Dimension | Weight | Full Points | Partial |
-|---|---|---|---|
-| NAICS match | 40% | 40 pts if company NAICS includes opp NAICS | 0 if no match |
-| Set-aside eligibility | 25% | 25 pts if cert matches set-aside | 12 pts if no set-aside restriction |
-| Geography | 15% | 15 pts if place_of_performance in target_geographies | 7 pts if place unspecified |
-| Contract value band | 10% | 10 pts if value in $100K–$5M range or unspecified | 0 otherwise |
-| Capability keywords | 10% | Up to 10 pts, scaled by keyword hits (max 5 hits = 10 pts) | Proportional |
+**Root cause:** Placeholder development shortcut left in production code.
 
-**Score threshold:** Matches with score < 40 are stored but not surfaced in the feed or digest.
+### Bug 2 — Translation Key Leak
 
-### Match Computation Flow
+The codebase was scaffolded with i18n in mind (dot-notation string keys are referenced in
+component code or design documents) but the i18n library was never installed or configured.
+There is no `next-intl` or equivalent in `package.json`, no `messages/` directory, and no
+`i18n.ts` configuration file.
 
-```mermaid
-sequenceDiagram
-    participant Trigger as Trigger (ingest/onboard/update)
-    participant Engine as computeMatchScore()
-    participant DB as Supabase (match_scores)
+**Root cause:** i18n library dependency missing; translation function either undefined or
+identity-returning, causing raw keys to pass through to the DOM.
 
-    Trigger->>DB: SELECT companies WHERE relevant
-    Trigger->>DB: SELECT opportunities WHERE relevant
-    loop For each (company, opportunity) pair
-        Trigger->>Engine: computeMatchScore(company, opp)
-        Engine-->>Trigger: {company_id, opportunity_id, score, reasons_json}
-    end
-    Trigger->>DB: UPSERT match_scores ON CONFLICT (company_id, opportunity_id)
-```
+**Fix approach:** For the MVP, remove i18n indirection entirely. Use hardcoded English strings
+directly in components. i18n can be added in a future iteration when multi-language support
+is actually required.
 
----
+### Bug 3 — Missing SEO Metadata
 
-## Ingestion Pipeline
+Next.js App Router requires each page segment to export its own `metadata` object (or
+`generateMetadata` function) to override the root layout fallback. No page segment in this
+codebase does so. The root layout's `metadata` also lacks Open Graph fields.
 
-### Primary Path: Apify Webhook
-
-```mermaid
-sequenceDiagram
-    participant Cron as Vercel Cron (06:00 UTC)
-    participant Apify as Apify Actor
-    participant Webhook as /api/ingest/apify/webhook
-    participant DB as Supabase
-
-    Cron->>Apify: Trigger fortuitous_pirate/sam-gov-scraper
-    Apify-->>Webhook: POST items[] (x-apify-secret header)
-    Webhook->>DB: INSERT ingestion_runs (status=STARTED)
-    loop For each item
-        Webhook->>DB: UPSERT opportunities ON CONFLICT (external_id, source_id)
-    end
-    Webhook->>DB: SELECT companies, SELECT new opportunities
-    Webhook->>DB: UPSERT match_scores
-    Webhook->>DB: UPDATE ingestion_runs (status=SUCCESS|FAILED)
-```
-
-### Fallback Path: Direct SAM.gov API
-
-`/api/ingest/sam/run` calls the SAM.gov REST API directly (with retry/backoff). Used when Apify is unavailable or for testing. Protected by `CRON_SECRET`.
-
-### Vercel Cron Schedule
-
-`vercel.json` should define two crons:
-
-```json
-{
-  "crons": [
-    {
-      "path": "/api/ingest/sam/run",
-      "schedule": "0 6 * * *"
-    },
-    {
-      "path": "/api/digest/run",
-      "schedule": "0 8 * * *"
-    }
-  ]
-}
-```
-
-Vercel cron jobs call the route with a `Authorization: Bearer <CRON_SECRET>` header automatically when configured via environment variables. The routes validate this header before executing.
-
-> Note: Vercel cron jobs on the Hobby plan run at most once per day. The Pro plan supports more frequent schedules. For the pilot, once-daily is sufficient.
-
----
-
-## Digest Pipeline
-
-```mermaid
-sequenceDiagram
-    participant Cron as Vercel Cron (08:00 UTC)
-    participant Digest as /api/digest/run
-    participant DB as Supabase
-    participant Email as Resend
-
-    Cron->>Digest: POST (Bearer CRON_SECRET)
-    Digest->>DB: INSERT digest_runs (status=STARTED)
-    Digest->>DB: SELECT profiles (trial active, not expired)
-    loop For each active user
-        Digest->>DB: SELECT companies WHERE owner_id = user.id
-        Digest->>DB: SELECT match_scores WHERE created_at > now()-24h AND score >= 40
-        alt Has new matches
-            Digest->>DB: SELECT opportunities for match ids
-            Digest->>Email: POST /emails (Resend API)
-            Digest->>DB: INSERT notifications (type=daily_digest)
-            Digest->>DB: UPDATE profiles SET last_digest_at = now()
-        end
-    end
-    Digest->>DB: UPDATE digest_runs (status=SUCCESS|FAILED, emails_sent=N)
-```
-
-### Digest Email Content
-
-- Subject: `Tendly: X new contract matches for [Company Name]`
-- Body (HTML):
-  - Count of new matches
-  - Up to 10 matches sorted by score descending, each showing: title, agency, score badge, proposals_due_at, deadline warning if ≤7 days, link to SAM.gov listing
-  - CTA button linking to `/dashboard`
-- Trial-expired users are skipped (checked via `trial_started_at + 24h < now()`)
-- Users with zero new matches (score ≥ 40, created in last 24h) are skipped
-
----
-
-## Trial / Paywall Enforcement
-
-### Trial Start
-
-`trial_started_at` is set on the `profiles` row the first time a user successfully authenticates. This is handled in the middleware or in a post-login server action:
-
-```typescript
-// In middleware or auth callback
-if (!profile.trial_started_at) {
-  await supabase.from('profiles').update({ trial_started_at: new Date().toISOString() }).eq('id', userId)
-}
-```
-
-### Trial Expiry Computation
-
-```typescript
-const trialExpiresAt = new Date(profile.trial_started_at).getTime() + 24 * 60 * 60 * 1000
-const trialActive = Date.now() < trialExpiresAt
-```
-
-### Enforcement Points
-
-| Layer | Mechanism | Behavior |
-|---|---|---|
-| Middleware | Check `trial_started_at + 24h` vs `now()` | Redirect expired users to `/paywall` |
-| `/api/feed/my` | Same check server-side | Return 403 with `{ error: 'trial_expired' }` |
-| Digest runner | Skip users where `trial_started_at + 24h < now()` | No email sent |
-| Data | No deletion | Company and match data preserved after expiry |
-
-### Paywall Screen
-
-Shown at `/paywall`. Contains:
-- Message: "Your 24-hour pilot has ended."
-- CTA: "Contact us to get full access" (mailto link or waitlist form)
-- No match data visible
-
----
-
-## Error Handling
-
-| Scenario | Behavior |
-|---|---|
-| Apify actor error / timeout | Mark `ingestion_runs` as FAILED, store error in `error_json`, preserve existing opportunities |
-| SAM.gov API rate limit / error | Retry up to 3 times with exponential backoff (500ms, 2s, 8s), then mark FAILED |
-| Resend delivery error | Log error, skip user, continue digest run, do not retry in same run |
-| Onboard API error | Return 500 with error message, do not create partial company record |
-| Feed API — unauthenticated | Return 401 |
-| Feed API — trial expired | Return 403 with `{ error: 'trial_expired' }` |
-| Admin API — missing/invalid CRON_SECRET | Return 401 |
-| Match computation error | Log error, mark ingestion run as FAILED, do not surface partial scores |
-| Supabase connection error | Propagate as 500, log to Vercel function logs |
-
----
-
-## Vercel Deployment
-
-### `vercel.json`
-
-```json
-{
-  "crons": [
-    {
-      "path": "/api/ingest/sam/run",
-      "schedule": "0 6 * * *"
-    },
-    {
-      "path": "/api/digest/run",
-      "schedule": "0 8 * * *"
-    }
-  ]
-}
-```
-
-### Required Environment Variables
-
-| Variable | Description |
-|---|---|
-| `NEXT_PUBLIC_SUPABASE_URL` | Supabase project URL |
-| `NEXT_PUBLIC_SUPABASE_ANON_KEY` | Supabase anon/public key |
-| `SUPABASE_SERVICE_ROLE_KEY` | Supabase service role key (server-only) |
-| `CRON_SECRET` | Secret token for cron-triggered routes |
-| `APIFY_TOKEN` | Apify API token |
-| `APIFY_ACTOR_ID` | Apify actor ID (`fortuitous_pirate/sam-gov-scraper`) |
-| `APIFY_WEBHOOK_SECRET` | Secret for validating Apify webhook calls |
-| `SAM_GOV_API_KEY` | SAM.gov API key (fallback direct ingestion) |
-| `RESEND_API_KEY` | Resend API key for transactional email |
-| `RESEND_FROM` | Verified sender address (e.g. `digest@tendly.co`) |
-| `NEXT_PUBLIC_BASE_URL` | Full deployment URL (e.g. `https://tendly.vercel.app`) |
-
-### Deployment Notes
-
-- Vercel serverless functions have a default 10s timeout on Hobby, 60s on Pro. The ingestion and digest routes may need the Pro plan or should be broken into smaller chunks for large datasets.
-- The Apify webhook URL must be registered in the Apify actor's webhook settings: `https://<your-domain>/api/ingest/apify/webhook`.
-- Supabase RLS must be enabled on all user-facing tables (already done in migration 001).
-- The `CRON_SECRET` must be set in Vercel environment variables. Vercel automatically passes it as `Authorization: Bearer <CRON_SECRET>` for cron-triggered routes when the variable name matches.
+**Root cause:** Per-page `metadata` exports were never added; root layout `metadata` is
+incomplete (no `openGraph`, no `twitter` fields).
 
 ---
 
 ## Correctness Properties
 
-*A property is a characteristic or behavior that should hold true across all valid executions of a system — essentially, a formal statement about what the system should do. Properties serve as the bridge between human-readable specifications and machine-verifiable correctness guarantees.*
+Property 1: Bug Condition — Homepage Renders Landing Page
 
-### Property 1: Protected routes redirect unauthenticated users
+_For any_ HTTP GET request to `/` where the visitor is unauthenticated, the fixed `app/page.tsx`
+SHALL return HTTP 200 with a rendered landing page containing a headline, value proposition,
+and at least one call-to-action link, and SHALL NOT issue a redirect to any admin route.
 
-*For any* HTTP request to a protected route (`/dashboard`, `/onboard`, `/admin/*`) made without a valid Supabase session, the middleware SHALL respond with a redirect to `/login`.
+**Validates: Requirements 2.1**
 
-**Validates: Requirements 1.8**
+Property 2: Bug Condition — No Translation Keys in Rendered Output
 
-### Property 2: Onboarding validation rejects incomplete submissions
+_For any_ rendered page output from the fixed codebase, the visible text content SHALL NOT
+contain strings matching the pattern `/\b\w+\.\w+(\.\w+)+\b/` (dot-notation i18n keys). All
+user-facing strings SHALL be resolved human-readable English text.
 
-*For any* POST to `/api/onboard/create` that is missing a company name or has an empty NAICS codes array, the endpoint SHALL return an error response and SHALL NOT create a company record in the database.
+**Validates: Requirements 2.2**
 
-**Validates: Requirements 2.4**
+Property 3: Bug Condition — Pages Return Rich SEO Metadata
 
-### Property 3: Ingestion upsert is idempotent
+_For any_ HTTP GET request to a public-facing page (`/`, `/login`, `/signup`), the fixed
+response SHALL include an HTML `<head>` containing: a page-specific `<title>` tag (not just
+"Tendly"), a `<meta name="description">` with non-empty content, and `<meta property="og:title">`
+and `<meta property="og:description">` Open Graph tags.
 
-*For any* batch of opportunity records, running the ingestion upsert twice SHALL produce the same set of rows in the `opportunities` table as running it once — no duplicates, no data loss.
+**Validates: Requirements 2.3**
 
-**Validates: Requirements 3.2, 4.9**
+Property 4: Preservation — Authenticated Flows Unaffected
 
-### Property 4: Ingestion run always reaches a terminal status
+_For any_ request to a path other than `/` (including `/dashboard`, `/onboard`, `/admin/*`,
+`/login`, `/signup`, `/paywall`, and all `/api/*` routes), the fixed codebase SHALL produce
+exactly the same response as the original codebase, preserving all existing authentication,
+trial enforcement, and data-access behaviour.
 
-*For any* ingestion run (whether it succeeds or fails), the corresponding `ingestion_runs` record SHALL end with status `SUCCESS` or `FAILED` — never left as `STARTED`.
+**Validates: Requirements 3.1, 3.2, 3.3, 3.4, 3.5, 3.6**
 
-**Validates: Requirements 3.4**
+---
 
-### Property 5: Failed ingestion preserves existing opportunities
+## Fix Implementation
 
-*For any* ingestion run that encounters an error, the count of rows in the `opportunities` table after the run SHALL be greater than or equal to the count before the run started.
+### Bug 1 — Replace Homepage Redirect
 
-**Validates: Requirements 3.5**
+**File:** `app/page.tsx`
 
-### Property 6: Opportunity field mapping is complete
+**Change:** Remove the `redirect('/admin/ingestion')` call. Replace the component body with a
+server component that renders a marketing landing page. The landing page must not require
+authentication — it is the public entry point.
 
-*For any* valid item returned by the Apify actor or SAM.gov API, the mapped `opportunities` record SHALL contain non-null values for `title`, `agency`, `synopsis`, and `sam_or_source_url`, and SHALL correctly map `naics_code`, `set_aside`, `place_of_performance`, `posted_at`, and `proposals_due_at` from the source payload.
+**Specific changes:**
+1. Remove `import { redirect } from 'next/navigation'` and the `redirect()` call.
+2. Add `export const metadata` with page-specific title, description, and Open Graph tags.
+3. Render a landing page with: headline ("Find Government Contracts That Match Your Business"),
+   sub-headline (value proposition), and CTA buttons linking to `/signup` and `/login`.
+4. Apply Tendly design tokens: Federal Blue (`#1B365D`) for headings, Action Mint (`#00D1B2`)
+   for the primary CTA button, Inter font (already loaded via `geistSans` variable or direct
+   import).
 
-**Validates: Requirements 3.6**
+### Bug 2 — Remove i18n Indirection
 
-### Property 7: Expired opportunities are excluded from the feed
+**Scope:** Any component or page that references dot-notation translation keys.
 
-*For any* opportunity whose `proposals_due_at` is before the current time, it SHALL NOT appear in the results returned by `/api/feed/my`.
+**Change:** Replace every `t('some.key')` call (or equivalent) with the hardcoded English
+string it was intended to resolve. No i18n library needs to be installed.
 
-**Validates: Requirements 3.7, 5.5**
+**Specific changes:**
+1. Audit all `.tsx` files for calls to any translation function or raw dot-notation string
+   literals used as display text.
+2. Replace each occurrence with the resolved English string inline.
+3. If a translation utility file exists (e.g. `lib/i18n.ts` or `utils/t.ts`), either delete
+   it or replace it with a no-op that returns its argument — but prefer removing the call sites
+   entirely.
 
-### Property 8: Match score formula is correct and bounded
+**Note:** Based on current codebase inspection, no i18n library is installed and no translation
+call sites were found in existing `.tsx` files. The landing page created for Bug 1 must be
+written with hardcoded strings from the start to prevent this bug from manifesting there.
 
-*For any* company and opportunity pair, `computeMatchScore` SHALL return a score between 0 and 100 (inclusive) equal to the sum of applicable weight contributions: NAICS (40 pts), set-aside (25 pts full / 12 pts partial), geography (15 pts full / 7 pts partial), value band (10 pts), keywords (up to 10 pts scaled by hit count).
+### Bug 3 — Add Per-Page Metadata and Open Graph to Root Layout
 
-**Validates: Requirements 4.2, 4.3, 4.4, 4.5, 4.6**
+**Files:** `app/layout.tsx`, `app/page.tsx`, `app/login/page.tsx`, `app/signup/page.tsx`
 
-### Property 9: Match computation covers all company–opportunity pairs
+**Changes to `app/layout.tsx`:**
+1. Extend the `metadata` export to include `openGraph` and `twitter` fields as the site-wide
+   fallback.
+2. Add `metadataBase` pointing to `NEXT_PUBLIC_BASE_URL` so relative OG image URLs resolve
+   correctly.
 
-*For any* ingestion run that produces N new opportunities and M companies in the database, the `match_scores` table SHALL contain at least N × M upserted records after the run completes.
+**Changes to `app/page.tsx`:**
+1. Export `metadata` with title `"Tendly — Find Government Contracts That Match Your Business"`,
+   a keyword-rich description targeting "government contract matching", "find government
+   contracts", "SAM.gov contract finder", and full Open Graph fields.
 
-**Validates: Requirements 4.1**
+**Changes to `app/login/page.tsx`:**
+1. Add `export const metadata` with title `"Log in — Tendly"` and a brief description.
+   (Note: this is a Client Component — metadata must be exported from a separate Server
+   Component wrapper or the page must be split into a server shell + client Auth widget.)
 
-### Property 10: Feed only returns matches above the score threshold
+**Changes to `app/signup/page.tsx`:**
+1. Same pattern as login: `"Sign up — Tendly"` title and description.
 
-*For any* response from `/api/feed/my`, all returned match records SHALL have a score greater than or equal to 40.
+**Metadata values:**
 
-**Validates: Requirements 4.7**
-
-### Property 11: Feed only returns the authenticated user's matches
-
-*For any* authenticated user, all match records returned by `/api/feed/my` SHALL have a `company_id` that belongs to a company owned by that user.
-
-**Validates: Requirements 5.1**
-
-### Property 12: Feed results are sorted by score descending
-
-*For any* response from `/api/feed/my` containing two or more matches, the scores SHALL appear in non-increasing order.
-
-**Validates: Requirements 5.2**
-
-### Property 13: Trial expiry is exactly 24 hours after trial start
-
-*For any* `trial_started_at` timestamp, the computed `trial_expires_at` SHALL equal `trial_started_at + 86400000` milliseconds.
-
-**Validates: Requirements 6.2**
-
-### Property 14: Expired trial blocks feed access with 403
-
-*For any* user whose `trial_started_at + 24h` is before the current time, a GET request to `/api/feed/my` SHALL return HTTP 403 with `{ error: 'trial_expired' }`.
-
-**Validates: Requirements 6.6**
-
-### Property 15: Trial expiry does not delete user data
-
-*For any* user whose trial has expired, their `companies` and `match_scores` records SHALL still exist in the database.
-
-**Validates: Requirements 6.7**
-
-### Property 16: Digest is sent only to users with new matches
-
-*For any* user with zero `match_scores` records created in the last 24 hours (or with score < 40), `runDigestForAll` SHALL NOT invoke `sendEmail` for that user.
-
-**Validates: Requirements 7.1, 7.5**
-
-### Property 17: Digest email content is complete and correctly ordered
-
-*For any* user with N new matches (N ≥ 1), the generated digest HTML SHALL contain the match count, up to 10 matches sorted by score descending, and for each match: title, agency, score, `proposals_due_at`, a deadline warning if due within 7 days, and a link to the SAM.gov listing.
-
-**Validates: Requirements 7.2, 7.3, 7.4**
-
-### Property 18: Digest delivery is recorded in notifications
-
-*For any* user who is sent a digest email, a row SHALL be inserted into `notifications` with `type = 'daily_digest'` and a non-null `sent_at` timestamp.
-
-**Validates: Requirements 7.6**
-
-### Property 19: Expired trial users are skipped in digest
-
-*For any* user whose `trial_started_at + 24h` is before the current time, `runDigestForAll` SHALL NOT invoke `sendEmail` for that user.
-
-**Validates: Requirements 7.7**
-
-### Property 20: Admin trigger endpoints require valid CRON_SECRET
-
-*For any* POST/GET request to `/api/ingest/sam/run` or `/api/digest/run` that does not include a valid `Authorization: Bearer <CRON_SECRET>` header, the endpoint SHALL return HTTP 401.
-
-**Validates: Requirements 8.7**
+| Page | title | description |
+|---|---|---|
+| `/` (root layout fallback) | `"Tendly"` | `"AI-powered government contract matching for small businesses"` |
+| `/` (page override) | `"Tendly — Find Government Contracts That Match Your Business"` | `"Tendly matches your business profile to active SAM.gov solicitations. Find government contracts, filter by set-aside, and never miss a deadline."` |
+| `/login` | `"Log in — Tendly"` | `"Log in to your Tendly account to view your personalized government contract matches."` |
+| `/signup` | `"Sign up — Tendly"` | `"Create a free Tendly account and start finding government contracts that match your business in minutes."` |
 
 ---
 
 ## Testing Strategy
 
-### Property-Based Testing
+### Validation Approach
 
-The matching engine and pipeline logic are well-suited to property-based testing because they are pure or near-pure functions with large input spaces. Use **fast-check** (TypeScript-native PBT library).
+Testing follows a two-phase approach: first confirm the bug is reproducible on unfixed code
+(exploratory), then verify the fix resolves it without breaking preserved behaviour.
 
-Each property test runs a minimum of 100 iterations. Tests are tagged with the property they validate.
+### Exploratory Bug Condition Checking
 
-```typescript
-// Example: Property 8 — score formula correctness
-import fc from 'fast-check'
-import { computeMatchScore } from '../lib/matching'
+**Goal:** Surface counterexamples that demonstrate each bug on the unfixed codebase. Confirm
+root cause analysis before implementing fixes.
 
-test('Property 8: match score is bounded 0-100 and reflects weights', () => {
-  // Feature: tendly-mvp, Property 8: match score formula is correct and bounded
-  fc.assert(fc.property(
-    fc.record({ id: fc.uuid(), naics_codes: fc.array(fc.string()), ... }),
-    fc.record({ id: fc.uuid(), naics_code: fc.option(fc.string()), ... }),
-    (company, opp) => {
-      const result = computeMatchScore(company, opp)
-      return result.score >= 0 && result.score <= 100
-    }
-  ), { numRuns: 100 })
-})
+**Test Plan:** Write tests that render the affected components/pages and assert on the output.
+Run on the unfixed code to observe failures.
+
+**Test Cases:**
+
+1. **Homepage redirect test** — render `app/page.tsx` in a test environment and assert the
+   response status is 200 and the body contains landing page content. On unfixed code this
+   will fail because `redirect()` is called instead. *(will fail on unfixed code)*
+
+2. **Translation key leak test** — render the landing page component and assert that no
+   visible text node matches `/\b\w+\.\w+(\.\w+)+\b/`. On unfixed code any i18n call site
+   would leak a key. *(will fail on unfixed code if i18n call sites exist)*
+
+3. **Root page metadata test** — render `app/page.tsx` and assert `metadata.title` is not
+   `"Tendly"` and `metadata.openGraph` is defined. On unfixed code the page exports no
+   `metadata`. *(will fail on unfixed code)*
+
+4. **Login/signup metadata test** — assert `metadata` exports exist on login and signup pages
+   with page-specific titles. *(will fail on unfixed code)*
+
+**Expected Counterexamples:**
+- Homepage render returns a redirect response rather than 200 HTML.
+- `metadata` is `undefined` on all individual page segments.
+- No Open Graph tags present in rendered `<head>`.
+
+### Fix Checking
+
+**Goal:** Verify that for all inputs where the bug condition holds, the fixed code produces
+the expected behaviour.
+
+**Pseudocode:**
+```
+FOR ALL X WHERE isBugCondition(X) DO
+  result := renderPage_fixed(X)
+  ASSERT (
+    (X.path = '/' IMPLIES result.statusCode = 200
+                          AND result.body CONTAINS landing_page_content
+                          AND result.body NOT CONTAINS redirect_to_admin)
+    AND result.visibleText NOT_MATCHES /\b\w+\.\w+(\.\w+)+\b/
+    AND result.head.title IS page_specific
+    AND result.head.ogTitle IS NOT EMPTY
+    AND result.head.ogDescription IS NOT EMPTY
+  )
+END FOR
 ```
 
-Properties covered by PBT: 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20.
+### Preservation Checking
 
-### Unit Tests (Example-Based)
+**Goal:** Verify that for all inputs where the bug condition does NOT hold, the fixed code
+produces the same result as the original code.
 
-Focus on specific scenarios not covered by property tests:
+**Pseudocode:**
+```
+FOR ALL X WHERE NOT isBugCondition(X) DO
+  ASSERT renderPage_original(X) = renderPage_fixed(X)
+  // Paths: /dashboard, /onboard, /admin/*, /login, /signup, /paywall, /api/*
+END FOR
+```
 
-- Auth redirect flows (login success → `/dashboard`, login failure → error message)
-- Onboarding happy path (valid submission → company created → redirect)
-- Empty dashboard state (no matches → empty state message shown)
-- Trial countdown display (active trial → countdown visible)
-- Paywall display (expired trial → paywall shown, no matches visible)
-- Admin panel access (non-OWNER → redirected)
-- Digest error handling (Resend throws → error logged, run continues)
+**Testing Approach:** Property-based testing is appropriate for preservation checking because:
+- It generates many combinations of authenticated state, trial status, and path automatically.
+- It catches edge cases (e.g. admin user hitting `/`, expired trial user hitting `/login`) that
+  manual tests might miss.
+- It provides strong guarantees that middleware and auth flows are unaffected.
+
+**Test Cases:**
+1. **Dashboard preservation** — authenticated user with active trial hitting `/dashboard`
+   continues to receive 200 with feed content.
+2. **Auth redirect preservation** — unauthenticated user hitting `/dashboard` continues to
+   receive a redirect to `/login`.
+3. **Admin route preservation** — OWNER-role user hitting `/admin/ingestion` continues to
+   receive 200 with ingestion run data.
+4. **API route preservation** — POST to `/api/onboard/create` with valid payload continues to
+   create a company record and return 200.
+5. **Trial expiry preservation** — GET to `/api/feed/my` for expired-trial user continues to
+   return 403 with `{ error: 'trial_expired' }`.
+
+### Unit Tests
+
+- Render `app/page.tsx` and assert: status 200, presence of headline text, presence of CTA
+  links to `/signup` and `/login`, absence of any redirect call.
+- Assert `metadata` export on `app/page.tsx` has non-generic title and non-empty
+  `openGraph.title` and `openGraph.description`.
+- Assert `metadata` exports on `app/login/page.tsx` and `app/signup/page.tsx` have
+  page-specific titles.
+- Assert root layout `metadata` includes `openGraph` and `metadataBase` fields.
+- Render landing page component and assert no visible text matches dot-notation key pattern.
+
+### Property-Based Tests
+
+- Generate random authenticated user states (role, trial status) and assert that requests to
+  paths other than `/` produce identical responses before and after the fix (preservation).
+- Generate random combinations of page paths and assert that every public page (`/`, `/login`,
+  `/signup`) returns a non-empty, page-specific `<title>` tag.
+- Generate random strings and assert the landing page component never renders them as
+  dot-notation keys (i.e. the component uses only hardcoded strings, not dynamic key lookups).
 
 ### Integration Tests
 
-- End-to-end onboarding: sign up → onboard → dashboard shows matches
-- Ingestion run: trigger `/api/ingest/sam/run` with mock SAM data → opportunities upserted → match scores computed
-- Digest run: trigger `/api/digest/run` → email sent to users with new matches → notifications recorded
-
-### Test Configuration
-
-- PBT library: `fast-check`
-- Test runner: Vitest (`vitest --run` for CI)
-- Mocking: Vitest's `vi.mock` for Supabase client and Resend API calls
-- Each property test: minimum 100 iterations (`numRuns: 100`)
-- Tag format: `// Feature: tendly-mvp, Property N: <property title>`
+- Full browser render of `/` — assert landing page is visible, no redirect occurs, page title
+  is correct in the browser tab, and OG meta tags are present in the DOM.
+- Social share preview simulation — fetch `/` with a bot user-agent and assert OG tags are
+  present and non-empty.
+- Authenticated user visits `/` — assert they see the landing page (not an admin redirect),
+  and can navigate to `/dashboard` via the CTA.
