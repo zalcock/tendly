@@ -9,8 +9,8 @@ export default function LoginClient() {
 
   const redirectTo =
     typeof window === 'undefined'
-      ? `${process.env.NEXT_PUBLIC_BASE_URL ?? 'https://tendygov.vercel.app'}/dashboard`
-      : `${process.env.NEXT_PUBLIC_BASE_URL ?? window.location.origin}/dashboard`
+      ? `${process.env.NEXT_PUBLIC_BASE_URL ?? 'https://tendygov.vercel.app'}/auth/callback`
+      : `${process.env.NEXT_PUBLIC_BASE_URL ?? window.location.origin}/auth/callback`
 
   return (
     <div className="flex min-h-screen items-center justify-center p-4" style={{ backgroundColor: '#f9fafb' }}>
