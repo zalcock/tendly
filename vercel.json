@@ -1,6 +1,7 @@
 {
   "crons": [
-    { "path": "/api/ingest/sam/run", "schedule": "0 6 * * *" },
-    { "path": "/api/digest/run", "schedule": "0 8 * * *" }
+    { "path": "/api/ingest/apify/run", "schedule": "0 6 * * *" },
+    { "path": "/api/ingest/eu/run",    "schedule": "0 7 * * *" },
+    { "path": "/api/digest/run",       "schedule": "0 8 * * *" }
   ]
 }

@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server'
-import { handleApifyItems, ApifySourceType } from '../../../../../src/lib/ingest/apify'
+import { handleApifyItems } from '../../../../../src/lib/ingest/apify'
 
 export async function POST(request: Request) {
   const secret = process.env.APIFY_WEBHOOK_SECRET ?? ''
@@ -10,10 +10,6 @@ export async function POST(request: Request) {
   if (secret && header !== secret) {
     return NextResponse.json({ ok: false, error: 'unauthorized' }, { status: 401 })
   }
-
-  // Allow caller to specify which source this webhook is for via ?source=US_SAM|EU_TENDER
-  const { searchParams } = new URL(request.url)
-  const sourceType = (searchParams.get('source') ?? 'US_SAM') as ApifySourceType
 
   let body: any
   try {
@@ -28,10 +24,10 @@ export async function POST(request: Request) {
   }
 
   try {
-    const result = await handleApifyItems(items, { sourceType })
-    return NextResponse.json({ ok: true, source: sourceType, result })
+    const result = await handleApifyItems(items, { sourceType: 'EU_TENDER' })
+    return NextResponse.json({ ok: true, source: 'EU_TENDER', result })
   } catch (err) {
-    console.error(`[ingest/apify/webhook] ${sourceType} error:`, err)
+    console.error('[ingest/eu/webhook] error:', err)
     return NextResponse.json({ ok: false, error: String(err) }, { status: 500 })
   }
 }
