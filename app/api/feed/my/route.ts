@@ -30,18 +30,22 @@ export async function GET() {
   }
   // If no trial_started_at, treat as trial active (user just signed up)
 
-  // 4. Query company for this user
-  const { data: company } = await supabase
+  // 4. Query ALL companies for this user — user may have multiple rows from
+  //    repeated onboarding attempts during testing. We union matches across all.
+  const { data: companies } = await supabase
     .from('companies')
     .select('id')
     .eq('owner_id', user.id)
-    .single()
 
-  if (!company) {
+  if (!companies || companies.length === 0) {
     return Response.json({ matches: [], trialExpiresAt: null, trialActive: true })
   }
 
-  // 5. Query match_scores joined with opportunities
+  const companyIds = companies.map((c: any) => c.id)
+
+  // 5. Query match_scores joined with opportunities across all company rows.
+  //    Score threshold lowered to 10 to surface all relevant matches while
+  //    the ingestion pipeline builds up a larger opportunity set.
   const { data: matchRows, error } = await supabase
     .from('match_scores')
     .select(`
@@ -62,8 +66,8 @@ export async function GET() {
         sam_or_source_url
       )
     `)
-    .eq('company_id', company.id)
-    .gte('score', 40)
+    .in('company_id', companyIds)
+    .gte('score', 10)
     .gt('opportunities.proposals_due_at', new Date().toISOString())
     .order('score', { ascending: false })
 
@@ -71,10 +75,17 @@ export async function GET() {
     return Response.json({ error: error.message }, { status: 500 })
   }
 
-  // 6. Shape the response — filter out rows where opportunity join returned null
-  //    (this happens when the .gt filter on the joined table excludes the row)
+  // 6. Shape the response — deduplicate by opportunity_id (multiple company
+  //    rows can produce duplicate matches), filter nulls from the join filter,
+  //    and keep the highest-scoring match per opportunity.
+  const seen = new Set<string>()
   const matches = (matchRows ?? [])
     .filter((row: any) => row.opportunities !== null)
+    .filter((row: any) => {
+      if (seen.has(row.opportunity_id)) return false
+      seen.add(row.opportunity_id)
+      return true
+    })
     .map((row: any) => ({
       id: row.id,
       score: row.score,
